@@ -15,4 +15,4 @@ Win32 RawInput ⚡ wrapper library.
 ## License
 
 MIT License  
-Copyright (c) 2019-2022 ttsuki  
+Copyright (c) 2019-2023 ttsuki  

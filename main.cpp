@@ -7,7 +7,6 @@
 
 #include "librawinput.h"
 
-#include <atomic>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -51,6 +50,7 @@ int main()
                 case RawInputDeviceType::Keyboard: return "Keyboard";
                 case RawInputDeviceType::Joystick: return "Joystick";
                 case RawInputDeviceType::GamePad: return "GamePad";
+                case RawInputDeviceType::Other: return "Other";
                 case RawInputDeviceType::ALL: return "ALL";
                 default: return "?";
                 }

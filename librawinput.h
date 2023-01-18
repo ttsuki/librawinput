@@ -4,9 +4,10 @@
 /// @date   2019.10.23 original
 /// @date   2021.11.18 v2
 /// @date   2022.05.22 v3
+/// @date   2023.01.19 v3.1
 
 // Licensed under the MIT License.
-// Copyright (c) 2019-2022 ttsuki All rights reserved.
+// Copyright (c) 2019-2023 ttsuki All rights reserved.
 
 #pragma once
 
@@ -14,12 +15,13 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
+#include <memory>
 #include <chrono>
+#include <string>
 #include <array>
-#include <bitset>
 #include <vector>
 #include <optional>
+#include <bitset>
 #include <functional>
 
 namespace ttsuki::librawinput
@@ -33,7 +35,32 @@ namespace ttsuki::librawinput
         static const high_resolution_clock::time_point ClockStart = high_resolution_clock::now();
         return static_cast<TIMESTAMP>(duration_cast<microseconds>(high_resolution_clock::now() - ClockStart).count());
     }
+}
 
+namespace ttsuki::librawinput
+{
+    /// Fixed memory buffer vector template.
+    template <class T, size_t TCapacity>
+    class ARRAY
+    {
+        std::array<T, TCapacity> values{};
+        size_t count{};
+
+    public:
+        [[nodiscard]] const T* data() const { return values.data(); }
+        [[nodiscard]] size_t size() const { return count; }
+        [[nodiscard]] size_t capacity() const { return TCapacity; }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] const T& operator [](size_t i) const { return values[i]; }
+        [[nodiscard]] auto begin() const { return values.begin(); }
+        [[nodiscard]] auto end() const { return values.begin() + count; }
+        void clear() { count = 0; }
+        void push_back(T item) { if (size() < capacity()) values[count++] = item; }
+    };
+}
+
+namespace ttsuki::librawinput
+{
     enum struct RawInputDeviceType : uint32_t
     {
         None = 0x00,
@@ -41,6 +68,7 @@ namespace ttsuki::librawinput
         Keyboard = 0x02,
         Joystick = 0x04,
         GamePad = 0x08,
+        Other = 0x80000000,
         ALL = ~0u,
     };
 
@@ -55,16 +83,16 @@ namespace ttsuki::librawinput
     };
 
     /// Starts listening raw input events.
-    /// @param targetDevices target devices (bitwise or-ed)
+    /// @param target_device_types target devices (bitwise or-ed)
     /// @returns devices
-    std::vector<RawInputDeviceDescription> GetRawInputDeviceList(RawInputDeviceType targetDevices);
+    std::vector<RawInputDeviceDescription> GetRawInputDeviceList(RawInputDeviceType target_device_types);
 
     struct KeyboardEvent;
     struct MouseEvent;
     struct HidEvent;
     struct JoystickHidEvent;
 
-    using RawInputEventCallback = std::function<void(const RAWINPUT* raw, TIMESTAMP timestamp)>;
+    using RawInputEventCallback = std::function<void(const RAWINPUT* input, TIMESTAMP timestamp)>;
     using KeyboardEventCallback = std::function<void(const KeyboardEvent&)>;
     using MouseEventCallback = std::function<void(const MouseEvent&)>;
     using HidEventCallback = std::function<void(const HidEvent&)>;
@@ -80,33 +108,15 @@ namespace ttsuki::librawinput
     };
 
     /// Starts listening raw input events.
-    /// @param targetDevices target devices (bitwise or-ed)
+    /// @param target_device_types target devices (bitwise or-ed)
     /// @param callbacks event callbacks
-    /// @returns listener
-    std::shared_ptr<void> StartRawInput(RawInputDeviceType targetDevices, RawInputCallbacks callbacks);
-
-    /// Fixed memory buffer vector template.
-    template <class T, size_t TCapacity>
-    struct FixedVector
-    {
-        std::array<T, TCapacity> values{};
-        size_t count{};
-
-        [[nodiscard]] const T* data() const { return values.data(); }
-        [[nodiscard]] size_t size() const { return count; }
-        [[nodiscard]] size_t capacity() const { return TCapacity; }
-        [[nodiscard]] bool empty() const { return size() == 0; }
-        [[nodiscard]] const T& operator [](size_t i) const { return values[i]; }
-        [[nodiscard]] auto begin() const { return values.begin(); }
-        [[nodiscard]] auto end() const { return values.begin() + count; }
-        void clear() { count = 0; }
-        void push_back(T item) { if (size() < capacity()) values[count++] = item; }
-    };
+    /// @returns listener handle
+    std::shared_ptr<void> StartRawInput(RawInputDeviceType target_device_types, RawInputCallbacks callbacks);
 
     struct KeyboardEvent
     {
         /// Constructs KeyboardEvent from RAWINPUT.
-        [[nodiscard]] static KeyboardEvent Parse(const RAWINPUT* raw, TIMESTAMP timestamp);
+        [[nodiscard]] static KeyboardEvent Parse(const RAWINPUT* input, TIMESTAMP timestamp);
 
         HANDLE Device;
         TIMESTAMP Timestamp;
@@ -120,7 +130,7 @@ namespace ttsuki::librawinput
     struct MouseEvent
     {
         /// Constructs MouseEvent from RAWINPUT.
-        [[nodiscard]] static MouseEvent Parse(const RAWINPUT* raw, TIMESTAMP timestamp);
+        [[nodiscard]] static MouseEvent Parse(const RAWINPUT* input, TIMESTAMP timestamp);
 
         HANDLE Device;
         TIMESTAMP Timestamp;
@@ -153,13 +163,17 @@ namespace ttsuki::librawinput
         [[nodiscard]] bool ButtonIsUp(ButtonIndex b) const { return (static_cast<uint32_t>(ReleasedButtons()) & static_cast<uint32_t>(b)) != 0; }
     };
 
+    struct HidDeviceCaps;
+
     struct HidEvent
     {
         /// Constructs HidEvent from RAWINPUT.
-        [[nodiscard]] static HidEvent Parse(const RAWINPUT* raw, TIMESTAMP timestamp);
+        [[nodiscard]] static HidEvent Parse(const RAWINPUT* input, TIMESTAMP timestamp, const HidDeviceCaps* caps);
 
         HANDLE Device;
         TIMESTAMP Timestamp;
+        RAWHID RawHid;
+        const HidDeviceCaps* Caps;
 
         struct ValueInput
         {
@@ -173,16 +187,18 @@ namespace ttsuki::librawinput
         struct ButtonInput
         {
             uint16_t Page;
+            uint16_t FirstUsage;
+            uint16_t LastUsage;
             uint16_t ButtonCount;
             uint64_t ButtonStatuses;
         };
 
-        constexpr static const size_t kMaxCountOfValues = 16;
-        constexpr static const size_t kMaxCountOfButtonPages = 16;
-        constexpr static const size_t kMaxCountOfButtonsPerPage = 64;
+        static inline constexpr size_t kMaxCountOfValues = 16;
+        static inline constexpr size_t kMaxCountOfButtonPages = 16;
+        static inline constexpr size_t kMaxCountOfButtonsPerPage = 64;
 
-        FixedVector<ValueInput, kMaxCountOfValues> Values;
-        FixedVector<ButtonInput, kMaxCountOfButtonPages> Buttons;
+        ARRAY<ValueInput, kMaxCountOfValues> Values;
+        ARRAY<ButtonInput, kMaxCountOfButtonPages> Buttons;
 
         [[nodiscard]] double ElapsedTimeSec() const { return static_cast<double>(Clock() - Timestamp) / 1000000.0; }
     };
